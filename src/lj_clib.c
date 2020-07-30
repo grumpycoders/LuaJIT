@@ -27,10 +27,13 @@
 
 #if defined(RTLD_DEFAULT)
 #define CLIB_DEFHANDLE	RTLD_DEFAULT
+#define CLIB_VIRTUAL	((void *)(intptr_t)-1)
 #elif LJ_TARGET_OSX || LJ_TARGET_BSD
 #define CLIB_DEFHANDLE	((void *)(intptr_t)-2)
+#define CLIB_VIRTUAL	((void *)(intptr_t)-3)
 #else
 #define CLIB_DEFHANDLE	NULL
+#define CLIB_VIRTUAL	((void *)(intptr_t)-1)
 #endif
 
 LJ_NORET LJ_NOINLINE static void clib_error_(lua_State *L)
@@ -133,7 +136,7 @@ static void *clib_loadlib(lua_State *L, const char *name, int global)
 
 static void clib_unloadlib(CLibrary *cl)
 {
-  if (cl->handle && cl->handle != CLIB_DEFHANDLE)
+  if (cl->handle && cl->handle != CLIB_DEFHANDLE && cl->handle != CLIB_VIRTUAL)
     dlclose(cl->handle);
 }
 
@@ -155,6 +158,7 @@ BOOL WINAPI GetModuleHandleExA(DWORD, LPCSTR, HMODULE*);
 #endif
 
 #define CLIB_DEFHANDLE	((void *)-1)
+#define CLIB_VIRTUAL	((void *)-2)
 
 /* Default libraries. */
 enum {
@@ -212,7 +216,9 @@ static void *clib_loadlib(lua_State *L, const char *name, int global)
 {
   DWORD oldwerr = GetLastError();
   void *h = LJ_WIN_LOADLIBA(clib_extname(L, name));
-  if (!h) clib_error(L, "cannot load module " LUA_QS ": %s", name);
+  if (!h) {
+    clib_error(L, "cannot load module " LUA_QS ": %s", name);
+  }
   SetLastError(oldwerr);
   UNUSED(global);
   return h;
@@ -231,7 +237,7 @@ static void clib_unloadlib(CLibrary *cl)
       }
     }
 #endif
-  } else if (cl->handle) {
+  } else if (cl->handle && cl->handle != CLIB_VIRTUAL) {
     FreeLibrary((HINSTANCE)cl->handle);
   }
 }
@@ -281,6 +287,8 @@ static void *clib_getsym(CLibrary *cl, const char *name)
 #else
 
 #define CLIB_DEFHANDLE	NULL
+#define CLIB_VIRTUAL	((void *)(intptr_t)-1)
+
 
 LJ_NORET LJ_NOINLINE static void clib_error(lua_State *L, const char *fmt,
 					    const char *name)
@@ -307,6 +315,38 @@ static void *clib_getsym(CLibrary *cl, const char *name)
 }
 
 #endif
+
+/* -- Virtual libraries helpers ------------------------------------------- */
+
+static int clib_virtual_exists(lua_State *L, const char *name) {
+  int top = lua_gettop(L);
+  int r = 0;
+  lua_checkstack(L, 2);
+  lua_getfield(L, LUA_REGISTRYINDEX, "_CLIBS");
+  if (!lua_isnil(L, -1)) {
+    lua_getfield(L, -1, name);
+    r = !lua_isnil(L, -1);
+  }
+  lua_settop(L, top);
+  return r;
+}
+
+static void *clib_virtual_resolve(lua_State *L, const char *name, const char *sym) {
+  int top = lua_gettop(L);
+  void *p = NULL;
+  lua_checkstack(L, 3);
+  lua_pushlstring(L, "_CLIBS", 6);
+  lua_getfield(L, LUA_REGISTRYINDEX, "_CLIBS");
+  if (!lua_isnil(L, -1)) {
+    lua_getfield(L, -1, name);
+    if (!lua_isnil(L, -1)) {
+      lua_getfield(L, -1, sym);
+      if (lua_islightuserdata(L, -1)) p = lua_touserdata(L, -1);
+    }
+  }
+  lua_settop(L, top);
+  return p;
+}
 
 /* -- C library indexing -------------------------------------------------- */
 
@@ -361,24 +401,29 @@ TValue *lj_clib_index(lua_State *L, CLibrary *cl, GCstr *name)
 #if LJ_TARGET_WINDOWS
       DWORD oldwerr = GetLastError();
 #endif
-      void *p = clib_getsym(cl, sym);
+      void *p;
       GCcdata *cd;
-      lj_assertCTS(ctype_isfunc(ct->info) || ctype_isextern(ct->info),
-		   "unexpected ctype %08x in clib", ct->info);
+      if (cl->handle == CLIB_VIRTUAL) {
+        p = clib_virtual_resolve(L, cl->name, strdata(name));
+      } else {
+        p = clib_getsym(cl, sym);
+        lj_assertCTS(ctype_isfunc(ct->info) || ctype_isextern(ct->info),
+        "unexpected ctype %08x in clib", ct->info);
 #if LJ_TARGET_X86 && LJ_ABI_WIN
-      /* Retry with decorated name for fastcall/stdcall functions. */
-      if (!p && ctype_isfunc(ct->info)) {
-	CTInfo cconv = ctype_cconv(ct->info);
-	if (cconv == CTCC_FASTCALL || cconv == CTCC_STDCALL) {
-	  CTSize sz = clib_func_argsize(cts, ct);
-	  const char *symd = lj_strfmt_pushf(L,
-			       cconv == CTCC_FASTCALL ? "@%s@%d" : "_%s@%d",
-			       sym, sz);
-	  L->top--;
-	  p = clib_getsym(cl, symd);
-	}
-      }
+        /* Retry with decorated name for fastcall/stdcall functions. */
+        if (!p && ctype_isfunc(ct->info)) {
+    CTInfo cconv = ctype_cconv(ct->info);
+    if (cconv == CTCC_FASTCALL || cconv == CTCC_STDCALL) {
+      CTSize sz = clib_func_argsize(cts, ct);
+      const char *symd = lj_strfmt_pushf(L,
+              cconv == CTCC_FASTCALL ? "@%s@%d" : "_%s@%d",
+              sym, sz);
+      L->top--;
+      p = clib_getsym(cl, symd);
+    }
+        }
 #endif
+      }
       if (!p)
 	clib_error(L, "cannot resolve symbol " LUA_QS ": %s", sym);
 #if LJ_TARGET_WINDOWS
@@ -396,12 +441,20 @@ TValue *lj_clib_index(lua_State *L, CLibrary *cl, GCstr *name)
 /* -- C library management ------------------------------------------------ */
 
 /* Create a new CLibrary object and push it on the stack. */
-static CLibrary *clib_new(lua_State *L, GCtab *mt)
+static CLibrary *clib_new(lua_State *L, GCtab *mt, GCstr *name)
 {
   GCtab *t = lj_tab_new(L, 0, 0);
   GCudata *ud = lj_udata_new(L, sizeof(CLibrary), t);
   CLibrary *cl = (CLibrary *)uddata(ud);
   cl->cache = t;
+  if (name) {
+    MSize len = name->len;
+    cl->name = lj_mem_realloc(L, NULL, 0, len + 1);
+    memcpy(cl->name, strdata(name), len);
+    cl->name[len] = 0;
+  } else {
+    cl->name = NULL;
+  }
   ud->udtype = UDTYPE_FFI_CLIB;
   /* NOBARRIER: The GCudata is new (marked white). */
   setgcref(ud->metatable, obj2gco(mt));
@@ -412,14 +465,21 @@ static CLibrary *clib_new(lua_State *L, GCtab *mt)
 /* Load a C library. */
 void lj_clib_load(lua_State *L, GCtab *mt, GCstr *name, int global)
 {
-  void *handle = clib_loadlib(L, strdata(name), global);
-  CLibrary *cl = clib_new(L, mt);
+  void *handle;
+  if (clib_virtual_exists(L, strdata(name))) {
+    handle = CLIB_VIRTUAL;
+  } else {
+    handle = clib_loadlib(L, strdata(name), global);
+  }
+  CLibrary *cl = clib_new(L, mt, name);
   cl->handle = handle;
 }
 
 /* Unload a C library. */
-void lj_clib_unload(CLibrary *cl)
+void lj_clib_unload(lua_State *L, CLibrary *cl)
 {
+  cl->name = lj_mem_realloc(L, cl->name, 0, 0);
+  cl->name = NULL;
   clib_unloadlib(cl);
   cl->handle = NULL;
 }
@@ -427,7 +487,7 @@ void lj_clib_unload(CLibrary *cl)
 /* Create the default C library object. */
 void lj_clib_default(lua_State *L, GCtab *mt)
 {
-  CLibrary *cl = clib_new(L, mt);
+  CLibrary *cl = clib_new(L, mt, NULL);
   cl->handle = CLIB_DEFHANDLE;
 }
 
