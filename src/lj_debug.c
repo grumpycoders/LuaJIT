@@ -1,6 +1,6 @@
 /*
 ** Debugging and introspection.
-** Copyright (C) 2005-2020 Mike Pall. See Copyright Notice in luajit.h
+** Copyright (C) 2005-2021 Mike Pall. See Copyright Notice in luajit.h
 */
 
 #define lj_debug_c
@@ -94,6 +94,7 @@ static BCPos debug_framepc(lua_State *L, GCfunc *fn, cTValue *nextframe)
 	}
       }
       ins = cframe_pc(cf);
+      if (!ins) return NO_BCPOS;
     }
   }
   pt = funcproto(fn);

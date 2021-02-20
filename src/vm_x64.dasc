@@ -1,6 +1,6 @@
 |// Low-level VM code for x64 CPUs in LJ_GC64 mode.
 |// Bytecode interpreter, fast functions and helper functions.
-|// Copyright (C) 2005-2020 Mike Pall. See Copyright Notice in luajit.h
+|// Copyright (C) 2005-2021 Mike Pall. See Copyright Notice in luajit.h
 |
 |.arch x64
 |.section code_op, code_sub
@@ -2509,10 +2509,8 @@ static void build_subroutines(BuildCtx *ctx)
   |  jmp <2
   |
   |9:  // Rethrow error from the right C frame.
-  |  neg RD
   |  mov CARG1, L:RB
-  |  mov CARG2, RD
-  |  call extern lj_err_throw		// (lua_State *L, int errcode)
+  |  call extern lj_err_run		// (lua_State *L)
   |.endif
   |
   |//-----------------------------------------------------------------------

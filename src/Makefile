@@ -7,7 +7,7 @@
 # Also works with MinGW and Cygwin on Windows.
 # Please check msvcbuild.bat for building with MSVC on Windows.
 #
-# Copyright (C) 2005-2020 Mike Pall. See Copyright Notice in luajit.h
+# Copyright (C) 2005-2021 Mike Pall. See Copyright Notice in luajit.h
 ##############################################################################
 
 MAJVER=  2
@@ -634,7 +634,7 @@ $(MINILUA_T): $(MINILUA_O)
 	$(E) "HOSTLINK  $@"
 	$(Q)$(HOST_CC) $(HOST_ALDFLAGS) -o $@ $(MINILUA_O) $(MINILUA_LIBS) $(HOST_ALIBS)
 
-host/buildvm_arch.h: $(DASM_DASC) $(DASM_DEP) $(DASM_DIR)/*.lua
+host/buildvm_arch.h: $(DASM_DASC) $(DASM_DEP) $(DASM_DIR)/*.lua lj_arch.h lua.h luaconf.h
 	$(E) "DYNASM    $@"
 	$(Q)$(DASM) $(DASM_FLAGS) -o $@ $(DASM_DASC)
 
