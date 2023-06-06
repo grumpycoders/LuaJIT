@@ -478,8 +478,10 @@ void lj_clib_load(lua_State *L, GCtab *mt, GCstr *name, int global)
 /* Unload a C library. */
 void lj_clib_unload(lua_State *L, CLibrary *cl)
 {
-  cl->name = lj_mem_realloc(L, cl->name, 0, 0);
-  cl->name = NULL;
+  if (cl->name) {
+    cl->name = lj_mem_realloc(L, cl->name, strlen(cl->name) + 1, 0);
+    cl->name = NULL;
+  }
   clib_unloadlib(cl);
   cl->handle = NULL;
 }
