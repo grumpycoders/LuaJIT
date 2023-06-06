@@ -25,7 +25,7 @@
 #include <dlfcn.h>
 #include <stdio.h>
 
-#if defined(RTLD_DEFAULT)
+#if defined(RTLD_DEFAULT) && !defined(NO_RTLD_DEFAULT)
 #define CLIB_DEFHANDLE	RTLD_DEFAULT
 #define CLIB_VIRTUAL	((void *)(intptr_t)-1)
 #elif LJ_TARGET_OSX || LJ_TARGET_BSD
