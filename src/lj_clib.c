@@ -447,6 +447,10 @@ static CLibrary *clib_new(lua_State *L, GCtab *mt, GCstr *name)
   GCudata *ud = lj_udata_new(L, sizeof(CLibrary), t);
   CLibrary *cl = (CLibrary *)uddata(ud);
   cl->cache = t;
+  ud->udtype = UDTYPE_FFI_CLIB;
+  /* NOBARRIER: The GCudata is new (marked white). */
+  setgcref(ud->metatable, obj2gco(mt));
+  setudataV(L, L->top++, ud);
   if (name) {
     MSize len = name->len;
     cl->name = lj_mem_realloc(L, NULL, 0, len + 1);
@@ -455,10 +459,6 @@ static CLibrary *clib_new(lua_State *L, GCtab *mt, GCstr *name)
   } else {
     cl->name = NULL;
   }
-  ud->udtype = UDTYPE_FFI_CLIB;
-  /* NOBARRIER: The GCudata is new (marked white). */
-  setgcref(ud->metatable, obj2gco(mt));
-  setudataV(L, L->top++, ud);
   return cl;
 }
 
