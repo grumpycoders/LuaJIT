@@ -1,3 +1,6 @@
+local root = os.scriptdir()
+local src_dir = path.join(root, "src")
+
 set_xmakever("2.5.5")
 
 set_policy("build.fence", true)
@@ -82,13 +85,15 @@ target("buildvm_headers")
         table.insert(flags, "-o")
         table.insert(flags, buildvm_arch_h)
         table.insert(flags, dasc)
+        local olddir = os.cd(root)
         os.vrunv(minilua, flags)
+        os.cd(olddir)
         if not os.isfile(buildvm_arch_h) then
             raise("Failed to generate buildvm_arch.h")
         end
-        if os.isfile("src/host/genversion.lua") then
+        if os.isfile(path.join(src_dir, "host", "genversion.lua")) then
             local luajit_h = path.absolute(path.join(outputdir, "luajit.h"))
-            local olddir = os.cd("src")
+            local olddir = os.cd(src_dir)
             if not os.isfile("luajit_relver.txt") then
                 local version
                 if os.isdir("../.git") then
@@ -123,7 +128,7 @@ target("buildvm")
     end
     add_defines("LUAJIT_ENABLE_LUA52COMPAT", {public = true})
     add_deps("minilua", "buildvm_headers")
-    add_files("src/host/buildvm*.c")
+    add_files(path.join(src_dir, "host", "buildvm*.c"))
     if is_host("windows") then
         add_defines("_CRT_SECURE_NO_DEPRECATE")
     else
@@ -165,7 +170,7 @@ target("buildvm")
             target:add("defines", "LUAJIT_OS=LUAJIT_OS_OTHER")
         end
 
-        target:add("includedirs", "src")
+        target:add("includedirs", src_dir)
     end)
 
     after_load(function (target)
@@ -182,11 +187,12 @@ target("luajit_headers")
     add_deps("buildvm")
     on_build(function (target)
         local buildvm = path.absolute(target:dep("buildvm"):targetfile())
-        local outputdir = target:objectdir()
+        local outputdir = path.absolute(target:objectdir())
         if not os.isdir(outputdir) then
             os.mkdir(outputdir)
         end
         local headers = {"bcdef", "ffdef", "libdef", "recdef", "vmdef"}
+        local olddir = os.cd(root)
         for _, m in ipairs(headers) do
             os.vrunv(buildvm, {"-m", m, "-o", path.join(outputdir, "lj_"..m..".h"), "src/lib_base.c", "src/lib_math.c", "src/lib_bit.c", "src/lib_string.c", "src/lib_table.c", "src/lib_io.c", "src/lib_os.c", "src/lib_package.c", "src/lib_debug.c", "src/lib_jit.c", "src/lib_ffi.c", "src/lib_buffer.c"})
         end
@@ -204,6 +210,7 @@ target("luajit_headers")
             end
             os.vrunv(buildvm, {"-m", mode, "-o", lj_vm_asm})
         end
+        os.cd(olddir)
     end)
 
 
@@ -266,15 +273,6 @@ target("luajit")
         add_defines("LUAJIT_UNWIND_EXTERNAL")
     end
 
-    after_install(function (target)
-        local htag = target:dep("buildvm_headers")
-        local hdir = htag:objectdir()
-        local luajit_h = path.join(hdir, "luajit.h")
-        if os.isfile(luajit_h) then
-             os.cp(luajit_h, path.join(target:installdir(), "include", "luajit", "luajit.h"))
-        end
-    end)
-
     before_build(function (target)
         import("core.tool.compiler")
         local htag = target:dep("luajit_headers")
@@ -301,7 +299,7 @@ target("luajit")
         target:add("includedirs", path.absolute(hdir))
         local bhtag = target:dep("buildvm_headers")
         local bhdir = bhtag:objectdir()
-        target:add("includedirs", path.absolute(bhdir))
+        target:add("includedirs", path.absolute(bhdir), {public = true})
     end)
 
 target("luajit_bin")
@@ -342,5 +340,5 @@ target("luajit_bin")
         local bhtag = lib:dep("buildvm_headers")
         local bhdir = bhtag:objectdir()
         target:add("includedirs", path.absolute(bhdir))
-        target:add("includedirs", "src")
+        target:add("includedirs", src_dir)
     end)
